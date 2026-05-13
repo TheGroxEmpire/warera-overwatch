@@ -140,6 +140,7 @@ export function createProgressReporter(options: ProgressReporterOptions) {
   let spinnerIndex = 0;
   let batchCount = 0;
   let batchOperations = 0;
+  let renderInterval: ReturnType<typeof setInterval> | undefined;
 
   function clearLine() {
     if (options.enabled && isTTY) {
@@ -277,6 +278,26 @@ export function createProgressReporter(options: ProgressReporterOptions) {
     process.stderr.write(`\r\x1b[2K${spinner} [${bar}] ${percentLabel} | ${details} | ${elapsed}`);
   }
 
+  function startRenderLoop() {
+    if (!options.enabled || !isTTY || options.verbose || renderInterval) {
+      return;
+    }
+
+    renderInterval = setInterval(() => {
+      render();
+    }, 125);
+    renderInterval.unref?.();
+  }
+
+  function stopRenderLoop() {
+    if (!renderInterval) {
+      return;
+    }
+
+    clearInterval(renderInterval);
+    renderInterval = undefined;
+  }
+
   function lineForEvent(event: OverwatchProgressEvent) {
     const prefix = `[${STAGE_LABELS[event.stage]}]`;
     if (event.stage === "fetch_transactions") {
@@ -328,6 +349,7 @@ export function createProgressReporter(options: ProgressReporterOptions) {
         return;
       }
 
+      startRenderLoop();
       printLine(
         `Starting War Era Overwatch audit | rate limit ${options.rateLimitPerMinute}/min`
       );
@@ -357,6 +379,8 @@ export function createProgressReporter(options: ProgressReporterOptions) {
       }
     },
     finish(message: string) {
+      stopRenderLoop();
+
       if (!options.enabled) {
         process.stderr.write(`${message}\n`);
         return;

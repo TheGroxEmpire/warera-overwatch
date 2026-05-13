@@ -14,7 +14,7 @@
 - Wage ratio checks based on `money / quantity`
 - Seller/buyer pair summaries for wage, article tip, and item market transactions
 - Market-price anomaly checks
-- Suspiciously fast market timing checks using `offerCreatedAt` and consecutive buy gaps
+- Suspicious item-market timing checks using separate seller-side offer-posting cadence and buyer-side purchase-gap cadence
 
 ## Install
 
@@ -65,7 +65,7 @@ Weekly drilldown files include:
 - expandable `<details>` blocks to show the full table where appropriate
 - item-level `trading` and `itemMarket` summaries grouped by item and direction
 - min, average, and max unit price for each grouped item flow
-- timing-analysis tables for offer fills under `1000ms` and buyer-side purchase gaps under `1000ms`
+- timing-analysis tables for rapid seller-side item-market offer-posting gaps, rapid buyer-side purchase gaps, and repeated narrow timing cadences
 
 ## Important Assumptions
 
@@ -74,7 +74,7 @@ Weekly drilldown files include:
 - Gear and other items without current public prices are left unvalued, so estimated wealth deltas are conservative.
 - Case-drop analysis uses fixed official rates for `case1` and `case2`. Unknown case codes are still summarized, but they are not compared to an official baseline.
 - Craft analysis checks `craftItem` transactions against the official scrap ladder: common `6`, uncommon `18`, rare `54`, epic `162`, legendary `486`, mythic `1458`.
-- Timing analysis flags `itemMarket` transactions when `createdAt - offerCreatedAt < 1000ms`, and buyer-side `itemMarket` purchases when consecutive buys are less than `1000ms` apart.
+- Timing analysis reports two separate `itemMarket` timing behaviors: seller-side offer posting cadence inferred from settled sales via `offerCreatedAt`, and buyer-side consecutive purchase gaps based on transaction `createdAt`. They are labeled separately so buyer scripting is not conflated with seller scripting.
 
 ## Notes
 

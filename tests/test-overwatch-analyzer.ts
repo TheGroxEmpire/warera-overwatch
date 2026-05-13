@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { analyzeOverwatchData } from "../src/overwatch/analyze";
 import { renderOverwatchMarkdown, renderWeeklyDetailMarkdown } from "../src/overwatch/markdown";
+import { buildOverwatchReport } from "../src/overwatch/service";
 
 const report = analyzeOverwatchData({
   user: {
@@ -368,55 +369,133 @@ const timingReport = analyzeOverwatchData({
   transactions: [
     {
       __v: 0,
-      _id: "fast-fill-1",
-      buyerId: "u2",
-      createdAt: "2026-05-07T10:00:00.800Z",
+      _id: "sell-1",
+      buyerId: "buyer-1",
+      createdAt: "2026-05-07T10:00:10.800Z",
       itemCode: "grain",
       money: 100,
       offerCreatedAt: "2026-05-07T10:00:00.000Z",
       quantity: 10,
-      sellerId: "seller-fast",
+      sellerId: "u2",
       transactionType: "itemMarket",
-      updatedAt: "2026-05-07T10:00:01.200Z"
+      updatedAt: "2026-05-07T10:00:11.200Z"
     },
     {
       __v: 0,
-      _id: "fast-gap-2",
-      buyerId: "u2",
-      createdAt: "2026-05-07T10:00:01.700Z",
+      _id: "sell-2",
+      buyerId: "buyer-2",
+      createdAt: "2026-05-07T10:00:11.700Z",
       itemCode: "bread",
       money: 200,
-      offerCreatedAt: "2026-05-07T09:59:57.000Z",
+      offerCreatedAt: "2026-05-07T10:00:00.820Z",
       quantity: 20,
-      sellerId: "seller-gap",
+      sellerId: "u2",
       transactionType: "itemMarket",
-      updatedAt: "2026-05-07T10:00:02.100Z"
+      updatedAt: "2026-05-07T10:00:12.100Z"
     },
     {
       __v: 0,
-      _id: "ignored-trading-3",
+      _id: "ignored-buy-3",
       buyerId: "u2",
-      createdAt: "2026-05-07T10:00:02.500Z",
+      createdAt: "2026-05-07T10:00:12.500Z",
       itemCode: "bread",
       money: 10,
-      offerCreatedAt: "2026-05-07T10:00:02.400Z",
+      offerCreatedAt: "2026-05-07T10:00:01.100Z",
       quantity: 1,
-      sellerId: "seller-ignored",
-      transactionType: "trading",
-      updatedAt: "2026-05-07T10:00:02.500Z"
+      sellerId: "seller-ignored-buy",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:12.500Z"
     },
     {
       __v: 0,
-      _id: "normal-gap-4",
+      _id: "buy-4",
       buyerId: "u2",
-      createdAt: "2026-05-07T10:00:05.500Z",
+      createdAt: "2026-05-07T10:00:13.320Z",
+      itemCode: "grain",
+      money: 12,
+      offerCreatedAt: "2026-05-07T10:00:01.400Z",
+      quantity: 1,
+      sellerId: "seller-buy-2",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:13.320Z"
+    },
+    {
+      __v: 0,
+      _id: "ignored-trading-5",
+      buyerId: "buyer-trading",
+      createdAt: "2026-05-07T10:00:13.400Z",
+      itemCode: "grain",
+      money: 12,
+      offerCreatedAt: "2026-05-07T10:00:01.650Z",
+      quantity: 1,
+      sellerId: "u2",
+      transactionType: "trading",
+      updatedAt: "2026-05-07T10:00:13.400Z"
+    },
+    {
+      __v: 0,
+      _id: "buy-6",
+      buyerId: "u2",
+      createdAt: "2026-05-07T10:00:14.150Z",
+      itemCode: "bread",
+      money: 13,
+      offerCreatedAt: "2026-05-07T10:00:01.900Z",
+      quantity: 1,
+      sellerId: "seller-buy-3",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:14.150Z"
+    },
+    {
+      __v: 0,
+      _id: "sell-7",
+      buyerId: "buyer-4",
+      createdAt: "2026-05-07T10:00:14.310Z",
+      itemCode: "grain",
+      money: 25,
+      offerCreatedAt: "2026-05-07T10:00:01.650Z",
+      quantity: 2,
+      sellerId: "u2",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:14.310Z"
+    },
+    {
+      __v: 0,
+      _id: "sell-8",
+      buyerId: "buyer-5",
+      createdAt: "2026-05-07T10:00:15.230Z",
+      itemCode: "bread",
+      money: 30,
+      offerCreatedAt: "2026-05-07T10:00:02.490Z",
+      quantity: 3,
+      sellerId: "u2",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:15.230Z"
+    },
+    {
+      __v: 0,
+      _id: "sell-9",
+      buyerId: "buyer-6",
+      createdAt: "2026-05-07T10:00:16.220Z",
+      itemCode: "grain",
+      money: 35,
+      offerCreatedAt: "2026-05-07T10:00:03.320Z",
+      quantity: 4,
+      sellerId: "u2",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:16.220Z"
+    },
+    {
+      __v: 0,
+      _id: "sell-10",
+      buyerId: "buyer-7",
+      createdAt: "2026-05-07T10:00:20.500Z",
       itemCode: "grain",
       money: 50,
-      offerCreatedAt: "2026-05-07T10:00:01.000Z",
+      offerCreatedAt: "2026-05-07T10:00:04.150Z",
       quantity: 5,
-      sellerId: "seller-normal",
+      sellerId: "u2",
       transactionType: "itemMarket",
-      updatedAt: "2026-05-07T10:00:05.500Z"
+      updatedAt: "2026-05-07T10:00:20.900Z"
     }
   ],
   marketPrices: {
@@ -429,27 +508,204 @@ const timingReport = analyzeOverwatchData({
 });
 
 assert.equal(timingReport.summary.timingAnalysis.thresholdMs, 1000);
-assert.equal(timingReport.summary.timingAnalysis.offerBackedTransactionCount, 3);
-assert.equal(timingReport.summary.timingAnalysis.rapidOfferFillCount, 1);
+assert.equal(timingReport.summary.timingAnalysis.sellerItemTransactionCount, 6);
+assert.equal(timingReport.summary.timingAnalysis.rapidOfferPostGapCount, 5);
+assert.equal(timingReport.summary.timingAnalysis.offerPostGapStats.count, 5);
+assert.equal(timingReport.summary.timingAnalysis.rapidOfferPostGaps[0]?.transactionId, "sell-2");
+assert.equal(timingReport.summary.timingAnalysis.regularOfferPostGapPattern?.sampleCount, 5);
 assert.equal(timingReport.summary.timingAnalysis.buyerItemTransactionCount, 3);
-assert.equal(timingReport.summary.timingAnalysis.rapidBuyGapCount, 1);
-assert.equal(timingReport.summary.timingAnalysis.rapidOfferFills[0]?.transactionId, "fast-fill-1");
-assert.equal(timingReport.summary.timingAnalysis.rapidBuyGaps[0]?.transactionId, "fast-gap-2");
+assert.equal(timingReport.summary.timingAnalysis.rapidBuyGapCount, 2);
+assert.equal(timingReport.summary.timingAnalysis.buyGapStats.count, 2);
+assert.equal(timingReport.summary.timingAnalysis.rapidBuyGaps[0]?.transactionId, "buy-4");
+assert.ok(
+  timingReport.summary.timingAnalysis.rapidOfferPostGaps.every((example) => example.type === "itemMarket")
+);
+assert.ok(
+  timingReport.summary.timingAnalysis.rapidBuyGaps.every((example) => example.type === "itemMarket")
+);
 assert.ok(timingReport.suspiciousSignals.some((signal) => signal.code === "timing_anomaly"));
 
 const timingMarkdown = renderOverwatchMarkdown(timingReport);
 assert.match(timingMarkdown, /## Timing Analysis/);
-assert.match(timingMarkdown, /### Rapid Offer Fills/);
-assert.match(timingMarkdown, /### Rapid Buy Gaps/);
+assert.match(timingMarkdown, /### Regular Timing Patterns/);
+assert.match(timingMarkdown, /### Rapid Offer Posting Gaps/);
+assert.match(timingMarkdown, /### Rapid Buyer Purchase Gaps/);
 assert.match(
   timingMarkdown,
-  /\| Time \| Prev Time \| Gap \(s\) \| Type \| Item \| Qty \| Money \| Counterparty \| Prev TX \| TX \|/
+  /\| Offer Time \| Prev Offer Time \| Gap \(s\) \| Prev Item \| Item \| Qty \| Money \| Buyer \| Sold Time \| Prev TX \| TX \|/
+);
+assert.match(
+  timingMarkdown,
+  /\| Time \| Prev Time \| Gap \(s\) \| Prev Item \| Item \| Qty \| Money \| Seller \| Prev TX \| TX \|/
 );
 assert.match(timingMarkdown, /Threshold: 1000ms/);
-assert.doesNotMatch(timingMarkdown, /<summary>Show all rapid (offer-fill|buy-gap) transactions/);
-assert.match(timingMarkdown, /fast-fill-1/);
-assert.match(timingMarkdown, /fast-gap-2/);
-assert.match(timingMarkdown, /0\.800/);
-assert.match(timingMarkdown, /0\.900/);
+assert.match(timingMarkdown, /Seller-side sold offer postings checked: 6/);
+assert.match(timingMarkdown, /Buyer-side item-market purchases checked: 3/);
+assert.match(timingMarkdown, /Offer-post gap stats: 5 samples/);
+assert.match(timingMarkdown, /Buyer purchase gap stats: 2 samples/);
+assert.match(timingMarkdown, /Offer Post Gap Cadence/);
+assert.doesNotMatch(timingMarkdown, /<summary>Show all rapid offer-post gap transactions/);
+assert.match(timingMarkdown, /sell-2/);
+assert.match(timingMarkdown, /sell-10/);
+assert.match(timingMarkdown, /buy-4/);
+assert.match(timingMarkdown, /buy-6/);
+assert.doesNotMatch(timingMarkdown, /ignored-trading-5/);
+assert.match(timingMarkdown, /0\.820/);
+assert.match(timingMarkdown, /0\.830/);
+
+const transactionFetchCalls: Array<{
+  transactionType?: string | string[];
+  cursor?: string;
+  limit?: number;
+}> = [];
+const parallelFetchReport = await buildOverwatchReport({
+  user: {
+    getUserLite: async ({ userId }: { userId: string }) =>
+      ({
+        _id: userId,
+        country: "country-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        rankings: {
+          userWealth: { rank: 1, tier: "gold", value: 100 },
+          userCasesOpened: { rank: 1, tier: "gold", value: 0 }
+        },
+        username:
+          {
+            "u-parallel": "ParallelUser",
+            "seller-1": "SellerOne",
+            "seller-2": "SellerTwo"
+          }[userId] ?? `user:${userId}`
+      }) as never
+  },
+  transaction: {
+    getPaginatedTransactions: async (input: {
+      userId: string;
+      transactionType?: string | string[];
+      cursor?: string;
+      limit?: number;
+    }) => {
+      transactionFetchCalls.push({
+        transactionType: input.transactionType,
+        cursor: input.cursor,
+        limit: input.limit
+      });
+
+      if (!input.transactionType) {
+        return {
+          items: [
+            {
+              __v: 0,
+              _id: "ptx-1",
+              buyerId: "u-parallel",
+              createdAt: "2026-05-09T00:00:00.000Z",
+              itemCode: "bread",
+              money: 10,
+              quantity: 1,
+              sellerId: "seller-1",
+              transactionType: "trading",
+              updatedAt: "2026-05-09T00:00:00.000Z"
+            },
+            {
+              __v: 0,
+              _id: "ptx-2",
+              buyerId: "u-parallel",
+              createdAt: "2026-05-08T00:00:00.000Z",
+              itemCode: "grain",
+              money: 20,
+              quantity: 2,
+              sellerId: "seller-2",
+              transactionType: "itemMarket",
+              updatedAt: "2026-05-08T00:00:00.000Z"
+            }
+          ],
+          nextCursor: "2026-05-07T00:00:00.000Z|probe-next"
+        };
+      }
+
+      if (input.transactionType === "trading") {
+        if (!input.cursor) {
+          return {
+            items: [
+              {
+                __v: 0,
+                _id: "ptx-1",
+                buyerId: "u-parallel",
+                createdAt: "2026-05-09T00:00:00.000Z",
+                itemCode: "bread",
+                money: 10,
+                quantity: 1,
+                sellerId: "seller-1",
+                transactionType: "trading",
+                updatedAt: "2026-05-09T00:00:00.000Z"
+              },
+              {
+                __v: 0,
+                _id: "ptx-3",
+                buyerId: "u-parallel",
+                createdAt: "2026-05-07T00:00:00.000Z",
+                itemCode: "bread",
+                money: 30,
+                quantity: 3,
+                sellerId: "seller-1",
+                transactionType: "trading",
+                updatedAt: "2026-05-07T00:00:00.000Z"
+              }
+            ],
+            nextCursor: undefined
+          };
+        }
+      }
+
+      if (input.transactionType === "itemMarket") {
+        return {
+          items: [
+            {
+              __v: 0,
+              _id: "ptx-2",
+              buyerId: "u-parallel",
+              createdAt: "2026-05-08T00:00:00.000Z",
+              itemCode: "grain",
+              money: 20,
+              quantity: 2,
+              sellerId: "seller-2",
+              transactionType: "itemMarket",
+              updatedAt: "2026-05-08T00:00:00.000Z"
+            }
+          ],
+          nextCursor: undefined
+        };
+      }
+
+      return {
+        items: [],
+        nextCursor: undefined
+      };
+    }
+  },
+  gameConfig: {
+    getGameConfig: async () => null
+  },
+  itemTrading: {
+    getPrices: async () => ({})
+  },
+  work: {
+    getStatsByUserId: async () => []
+  }
+} as never, {
+  userId: "u-parallel",
+  timezone: "UTC",
+  days: 90,
+  transactionPageLimit: 2,
+  includeTransactions: true
+});
+
+assert.equal(parallelFetchReport.coverage.transactionCount, 3);
+assert.equal(parallelFetchReport.normalizedTransactions?.length, 3);
+assert.equal(
+  transactionFetchCalls.filter((call) => call.transactionType === undefined).length,
+  1
+);
+assert.ok(transactionFetchCalls.some((call) => call.transactionType === "trading"));
+assert.ok(transactionFetchCalls.some((call) => call.transactionType === "itemMarket"));
 
 console.log("test-overwatch-analyzer: ok");

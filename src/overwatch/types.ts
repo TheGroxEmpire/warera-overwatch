@@ -288,13 +288,44 @@ export interface OverwatchMarketBenchmarkSummary {
   examples: MarketPriceOutlierExample[];
 }
 
-export interface OverwatchRapidOfferFillExample {
+export interface OverwatchTimingMetricSummary {
+  count: number;
+  minMs: number | null;
+  averageMs: number | null;
+  medianMs: number | null;
+  maxMs: number | null;
+}
+
+export interface OverwatchTimingPatternCluster {
+  eligibleSampleCount: number;
+  sampleCount: number;
+  share: number;
+  clusterWindowMs: number;
+  maxConsideredMs: number;
+  minMs: number;
+  averageMs: number;
+  medianMs: number;
+  maxMs: number;
+  standardDeviationMs: number;
+  coefficientOfVariation: number;
+  firstObservedAt: string;
+  lastObservedAt: string;
+}
+
+export interface OverwatchRapidOfferPostGapExample {
+  previousTransactionId: string;
+  previousCreatedAt: string;
+  previousOfferCreatedAt: string;
+  previousType: SupportedTransactionType;
+  previousItemCode: string;
+  previousQuantity: number;
+  previousMoney: number;
+  previousCounterparty: string;
   transactionId: string;
   createdAt: string;
   offerCreatedAt: string;
-  delayMs: number;
+  gapMs: number;
   type: SupportedTransactionType;
-  role: "buyer" | "seller" | "self" | "unknown";
   itemCode: string;
   quantity: number;
   money: number;
@@ -321,11 +352,15 @@ export interface OverwatchRapidBuyGapExample {
 
 export interface OverwatchTimingAnomalySummary {
   thresholdMs: number;
-  offerBackedTransactionCount: number;
-  rapidOfferFillCount: number;
+  sellerItemTransactionCount: number;
+  rapidOfferPostGapCount: number;
+  offerPostGapStats: OverwatchTimingMetricSummary;
+  regularOfferPostGapPattern: OverwatchTimingPatternCluster | null;
+  rapidOfferPostGaps: OverwatchRapidOfferPostGapExample[];
   buyerItemTransactionCount: number;
   rapidBuyGapCount: number;
-  rapidOfferFills: OverwatchRapidOfferFillExample[];
+  buyGapStats: OverwatchTimingMetricSummary;
+  regularBuyGapPattern: OverwatchTimingPatternCluster | null;
   rapidBuyGaps: OverwatchRapidBuyGapExample[];
 }
 

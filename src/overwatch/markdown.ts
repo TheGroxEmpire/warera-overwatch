@@ -93,6 +93,29 @@ function millisecondsToSeconds(value: number): string {
   return seconds(value / 1000);
 }
 
+function preciseMilliseconds(value: number | null | undefined): string {
+  return typeof value === "number" ? `${value.toFixed(1).replace(/\.0$/, "")}ms` : "n/a";
+}
+
+function formatTimingMetricSummary(
+  metric:
+    | OverwatchAuditReport["summary"]["timingAnalysis"]["offerPostGapStats"]
+    | OverwatchAuditReport["summary"]["timingAnalysis"]["buyGapStats"]
+    | undefined
+): string {
+  if (!metric || metric.count === 0) {
+    return "none";
+  }
+
+  return [
+    `${metric.count} samples`,
+    `min ${preciseMilliseconds(metric.minMs)}`,
+    `avg ${preciseMilliseconds(metric.averageMs)}`,
+    `median ${preciseMilliseconds(metric.medianMs)}`,
+    `max ${preciseMilliseconds(metric.maxMs)}`
+  ].join(" | ");
+}
+
 function renderTable(headers: string[], rows: Array<Array<string | number | undefined>>): string {
   const headerRow = `| ${headers.map(escapeCell).join(" | ")} |`;
   const separator = `| ${headers.map(() => "---").join(" | ")} |`;
@@ -554,9 +577,9 @@ function renderWeeklyRows(
 function renderTimingAnalysis(report: OverwatchAuditReport): string {
   const timing = report.summary.timingAnalysis as OverwatchAuditReport["summary"]["timingAnalysis"] & {
     thresholdSeconds?: number;
-    rapidOfferFills: Array<
-      OverwatchAuditReport["summary"]["timingAnalysis"]["rapidOfferFills"][number] & {
-        delaySeconds?: number;
+    rapidOfferPostGaps: Array<
+      OverwatchAuditReport["summary"]["timingAnalysis"]["rapidOfferPostGaps"][number] & {
+        gapSeconds?: number;
       }
     >;
     rapidBuyGaps: Array<
@@ -571,70 +594,122 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
       : typeof timing.thresholdSeconds === "number"
       ? Math.round(timing.thresholdSeconds * 1000)
       : 0;
+  const regularPatternRows: Array<Array<string | number | undefined>> = [];
+  if (timing.regularOfferPostGapPattern) {
+    regularPatternRows.push([
+      "Offer Post Gap Cadence",
+      `${timing.regularOfferPostGapPattern.sampleCount}/${timing.regularOfferPostGapPattern.eligibleSampleCount}`,
+      `${timing.regularOfferPostGapPattern.minMs}-${timing.regularOfferPostGapPattern.maxMs}`,
+      preciseMilliseconds(timing.regularOfferPostGapPattern.averageMs),
+      preciseMilliseconds(timing.regularOfferPostGapPattern.medianMs),
+      preciseMilliseconds(timing.regularOfferPostGapPattern.standardDeviationMs),
+      percent(timing.regularOfferPostGapPattern.share),
+      `${timing.regularOfferPostGapPattern.firstObservedAt} -> ${timing.regularOfferPostGapPattern.lastObservedAt}`
+    ]);
+  }
+  if (timing.regularBuyGapPattern) {
+    regularPatternRows.push([
+      "Buyer Purchase Gap Cadence",
+      `${timing.regularBuyGapPattern.sampleCount}/${timing.regularBuyGapPattern.eligibleSampleCount}`,
+      `${timing.regularBuyGapPattern.minMs}-${timing.regularBuyGapPattern.maxMs}`,
+      preciseMilliseconds(timing.regularBuyGapPattern.averageMs),
+      preciseMilliseconds(timing.regularBuyGapPattern.medianMs),
+      preciseMilliseconds(timing.regularBuyGapPattern.standardDeviationMs),
+      percent(timing.regularBuyGapPattern.share),
+      `${timing.regularBuyGapPattern.firstObservedAt} -> ${timing.regularBuyGapPattern.lastObservedAt}`
+    ]);
+  }
   const sections = [
-    `Threshold: ${milliseconds(thresholdMs)} | Offer-backed item-market transactions checked: ${timing.offerBackedTransactionCount} | Rapid offer fills: ${timing.rapidOfferFillCount} | Buyer-side item-market transactions checked: ${timing.buyerItemTransactionCount} | Rapid buy gaps: ${timing.rapidBuyGapCount}`,
+    `Threshold: ${milliseconds(thresholdMs)} | Seller-side sold offer postings checked: ${timing.sellerItemTransactionCount} | Rapid offer-post gaps: ${timing.rapidOfferPostGapCount} | Buyer-side item-market purchases checked: ${timing.buyerItemTransactionCount} | Rapid buy gaps: ${timing.rapidBuyGapCount}`,
+    `Offer-post gap stats: ${formatTimingMetricSummary(timing.offerPostGapStats)}`,
+    `Buyer purchase gap stats: ${formatTimingMetricSummary(timing.buyGapStats)}`,
     ``
   ];
 
-  if (timing.rapidOfferFills.length > 0) {
+  if (regularPatternRows.length > 0) {
     sections.push(
-      `### Rapid Offer Fills`,
+      `### Regular Timing Patterns`,
+      ``,
+      renderTable(
+        [
+          "Pattern",
+          "Samples",
+          "Range (ms)",
+          "Avg",
+          "Median",
+          "Std Dev",
+          "Share",
+          "Observed"
+        ],
+        regularPatternRows
+      ),
+      ``
+    );
+  } else {
+    sections.push(`No repeated narrow item-market offer-posting cadence detected in sub-${milliseconds(thresholdMs * 2)} samples.`, ``);
+  }
+
+  if (timing.rapidOfferPostGaps.length > 0) {
+    sections.push(
+      `### Rapid Offer Posting Gaps`,
       ``,
       renderTableSection({
         headers: [
-          "Buy Time",
           "Offer Time",
-          "Delay (s)",
-          "Type",
-          "Role",
+          "Prev Offer Time",
+          "Gap (s)",
+          "Prev Item",
           "Item",
           "Qty",
           "Money",
-          "Counterparty",
+          "Buyer",
+          "Sold Time",
+          "Prev TX",
           "TX"
         ],
-        rows: timing.rapidOfferFills.map((example) => [
-          example.createdAt,
+        rows: timing.rapidOfferPostGaps.map((example) => [
           example.offerCreatedAt,
+          example.previousOfferCreatedAt,
           millisecondsToSeconds(
-            typeof example.delayMs === "number"
-              ? example.delayMs
+            typeof example.gapMs === "number"
+              ? example.gapMs
               : Math.round(
-                  (((example as typeof example & { delaySeconds?: number }).delaySeconds ?? 0) * 1000)
+                  (((example as typeof example & { gapSeconds?: number }).gapSeconds ?? 0) * 1000)
                 )
           ),
-          example.type,
-          example.role,
+          example.previousItemCode,
           example.itemCode,
           quantity(example.quantity),
           money(example.money),
           example.counterparty,
+          example.createdAt,
+          example.previousTransactionId,
           example.transactionId
         ]),
         rowLimit: "all",
-        emptyMessage: `No offer-backed item-market transactions settled within ${milliseconds(thresholdMs)}.`,
-        detailsLabel: "rapid offer-fill transactions"
+        emptyMessage: `No seller-side item-market offer postings were closer than ${milliseconds(thresholdMs)} apart.`,
+        detailsLabel: "rapid offer-post gap transactions"
       }),
       ``
     );
   } else {
-    sections.push(`No offer-backed item-market transactions settled within ${milliseconds(thresholdMs)}.`, ``);
+    sections.push(`No seller-side item-market offer postings were closer than ${milliseconds(thresholdMs)} apart.`, ``);
   }
 
   if (timing.rapidBuyGaps.length > 0) {
     sections.push(
-      `### Rapid Buy Gaps`,
+      `### Rapid Buyer Purchase Gaps`,
       ``,
       renderTableSection({
         headers: [
           "Time",
           "Prev Time",
           "Gap (s)",
-          "Type",
+          "Prev Item",
           "Item",
           "Qty",
           "Money",
-          "Counterparty",
+          "Seller",
           "Prev TX",
           "TX"
         ],
@@ -648,7 +723,7 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
                   (((example as typeof example & { gapSeconds?: number }).gapSeconds ?? 0) * 1000)
                 )
           ),
-          example.type,
+          example.previousItemCode,
           example.itemCode,
           quantity(example.quantity),
           money(example.money),
@@ -658,12 +733,17 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
         ]),
         rowLimit: "all",
         emptyMessage: `No buyer-side item-market purchases were closer than ${milliseconds(thresholdMs)} apart.`,
-        detailsLabel: "rapid buy-gap transactions"
-      })
+        detailsLabel: "rapid buyer purchase-gap transactions"
+      }),
+      ``
     );
   } else {
-    sections.push(`No buyer-side item-market purchases were closer than ${milliseconds(thresholdMs)} apart.`);
+    sections.push(`No buyer-side item-market purchases were closer than ${milliseconds(thresholdMs)} apart.`, ``);
   }
+
+  sections.push(
+    `Seller-side timings use sold item-market transactions only, with posting times inferred from \`offerCreatedAt\`. Buyer-side timings use consecutive purchase completion times (\`createdAt\`).`
+  );
 
   return sections.join("\n");
 }

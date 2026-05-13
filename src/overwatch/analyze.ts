@@ -1163,75 +1163,286 @@ function getElapsedMilliseconds(startAt: string | undefined, endAt: string | und
   return endMs - startMs;
 }
 
+function getMedian(values: number[]): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  return sorted[middle];
+}
+
+function getStandardDeviation(values: number[], average: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const variance =
+    values.reduce((sum, value) => sum + (value - average) ** 2, 0) / values.length;
+
+  return Math.sqrt(variance);
+}
+
+function summarizeTimingMetric(values: number[]): OverwatchTimingAnomalySummary["offerPostGapStats"] {
+  if (values.length === 0) {
+    return {
+      count: 0,
+      minMs: null,
+      averageMs: null,
+      medianMs: null,
+      maxMs: null
+    };
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const average = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+  const median = getMedian(sorted);
+
+  return {
+    count: sorted.length,
+    minMs: sorted[0] ?? null,
+    averageMs: round(average, 2),
+    medianMs: median === null ? null : round(median, 2),
+    maxMs: sorted[sorted.length - 1] ?? null
+  };
+}
+
+function findRegularTimingPattern(
+  samples: Array<{ valueMs: number; createdAt: string }>,
+  thresholds: OverwatchThresholds
+): OverwatchTimingAnomalySummary["regularOfferPostGapPattern"] {
+  const minSampleCount = 5;
+  const maxConsideredMs = Math.max(thresholds.rapidTimingWindowMs * 2, 1500);
+  const clusterWindowMs = Math.max(Math.round(thresholds.rapidTimingWindowMs * 0.15), 150);
+  const eligible = samples
+    .filter((sample) => sample.valueMs <= maxConsideredMs)
+    .sort(
+      (left, right) =>
+        left.valueMs - right.valueMs || left.createdAt.localeCompare(right.createdAt)
+    );
+
+  if (eligible.length < minSampleCount) {
+    return null;
+  }
+
+  let bestStart = 0;
+  let bestEnd = 0;
+  let end = 0;
+
+  for (let start = 0; start < eligible.length; start += 1) {
+    if (end < start) {
+      end = start;
+    }
+
+    while (
+      end < eligible.length &&
+      eligible[end] &&
+      eligible[start] &&
+      eligible[end].valueMs - eligible[start].valueMs <= clusterWindowMs
+    ) {
+      end += 1;
+    }
+
+    const currentCount = end - start;
+    const bestCount = bestEnd - bestStart;
+    const currentRange =
+      currentCount > 0
+        ? (eligible[end - 1]?.valueMs ?? 0) - (eligible[start]?.valueMs ?? 0)
+        : Number.POSITIVE_INFINITY;
+    const bestRange =
+      bestCount > 0
+        ? (eligible[bestEnd - 1]?.valueMs ?? 0) - (eligible[bestStart]?.valueMs ?? 0)
+        : Number.POSITIVE_INFINITY;
+    const currentAverage =
+      currentCount > 0
+        ? eligible
+            .slice(start, end)
+            .reduce((sum, sample) => sum + sample.valueMs, 0) / currentCount
+        : Number.POSITIVE_INFINITY;
+    const bestAverage =
+      bestCount > 0
+        ? eligible
+            .slice(bestStart, bestEnd)
+            .reduce((sum, sample) => sum + sample.valueMs, 0) / bestCount
+        : Number.POSITIVE_INFINITY;
+
+    if (
+      currentCount > bestCount ||
+      (currentCount === bestCount &&
+        (currentRange < bestRange ||
+          (currentRange === bestRange && currentAverage < bestAverage)))
+    ) {
+      bestStart = start;
+      bestEnd = end;
+    }
+  }
+
+  const cluster = eligible.slice(bestStart, bestEnd);
+  if (cluster.length < minSampleCount) {
+    return null;
+  }
+
+  const share = cluster.length / eligible.length;
+  if (share < 0.5 && cluster.length < minSampleCount + 2) {
+    return null;
+  }
+
+  const values = cluster.map((sample) => sample.valueMs);
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const median = getMedian(values) ?? average;
+  const standardDeviation = getStandardDeviation(values, average);
+  const chronological = [...cluster].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt)
+  );
+
+  return {
+    eligibleSampleCount: eligible.length,
+    sampleCount: cluster.length,
+    share: round(share, 4),
+    clusterWindowMs,
+    maxConsideredMs,
+    minMs: Math.min(...values),
+    averageMs: round(average, 2),
+    medianMs: round(median, 2),
+    maxMs: Math.max(...values),
+    standardDeviationMs: round(standardDeviation, 2),
+    coefficientOfVariation: average === 0 ? 0 : round(standardDeviation / average, 4),
+    firstObservedAt: chronological[0]?.createdAt ?? "",
+    lastObservedAt: chronological[chronological.length - 1]?.createdAt ?? ""
+  };
+}
+
 function summarizeTimingAnalysis(
   transactions: NormalizedTransaction[],
   thresholds: OverwatchThresholds
 ): OverwatchTimingAnomalySummary {
-  const rapidOfferFills: OverwatchTimingAnomalySummary["rapidOfferFills"] = [];
+  const rapidOfferPostGaps: OverwatchTimingAnomalySummary["rapidOfferPostGaps"] = [];
+  const offerPostGapSamples: Array<{ valueMs: number; createdAt: string }> = [];
+  const offerPostGapValues: number[] = [];
   const rapidBuyGaps: OverwatchTimingAnomalySummary["rapidBuyGaps"] = [];
-  let offerBackedTransactionCount = 0;
-  let buyerItemTransactionCount = 0;
+  const buyGapSamples: Array<{ valueMs: number; createdAt: string }> = [];
+  const buyGapValues: number[] = [];
+  type SellerOfferTransaction = NormalizedTransaction & {
+    itemCode: string;
+    original: NormalizedTransaction["original"] & { offerCreatedAt: string };
+  };
+  const sellerOfferTransactions = transactions
+    .filter(
+      (transaction): transaction is SellerOfferTransaction =>
+        MARKET_TIMING_TYPES.has(transaction.type) &&
+        transaction.role === "seller" &&
+        typeof transaction.itemCode === "string" &&
+        transaction.quantity > 0 &&
+        typeof transaction.original.offerCreatedAt === "string"
+    )
+    .sort((left, right) => {
+      const leftOfferCreatedAt = left.original.offerCreatedAt ?? "";
+      const rightOfferCreatedAt = right.original.offerCreatedAt ?? "";
+      return (
+        leftOfferCreatedAt.localeCompare(rightOfferCreatedAt) ||
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.transactionId.localeCompare(right.transactionId)
+      );
+    });
+
+  let previousSellerOfferTransaction: SellerOfferTransaction | null = null;
   let previousBuyerItemTransaction: NormalizedTransaction | null = null;
+
+  for (const transaction of sellerOfferTransactions) {
+    const offerCreatedAt = transaction.original.offerCreatedAt;
+    if (!offerCreatedAt) {
+      continue;
+    }
+
+    if (previousSellerOfferTransaction) {
+      const gapMs = getElapsedMilliseconds(
+        previousSellerOfferTransaction.original.offerCreatedAt,
+        offerCreatedAt
+      );
+      if (gapMs !== null) {
+        offerPostGapSamples.push({
+          valueMs: gapMs,
+          createdAt: offerCreatedAt
+        });
+        offerPostGapValues.push(gapMs);
+        if (gapMs < thresholds.rapidTimingWindowMs) {
+          rapidOfferPostGaps.push({
+            previousTransactionId: previousSellerOfferTransaction.transactionId,
+            previousCreatedAt: previousSellerOfferTransaction.createdAt,
+            previousOfferCreatedAt: previousSellerOfferTransaction.original.offerCreatedAt,
+            previousType: previousSellerOfferTransaction.type,
+            previousItemCode: previousSellerOfferTransaction.itemCode ?? "-",
+            previousQuantity: previousSellerOfferTransaction.quantity,
+            previousMoney: previousSellerOfferTransaction.money,
+            previousCounterparty: previousSellerOfferTransaction.counterpartyLabel,
+            transactionId: transaction.transactionId,
+            createdAt: transaction.createdAt,
+            offerCreatedAt,
+            gapMs,
+            type: transaction.type,
+            itemCode: transaction.itemCode,
+            quantity: transaction.quantity,
+            money: transaction.money,
+            counterparty: transaction.counterpartyLabel
+          });
+        }
+      }
+    }
+
+    previousSellerOfferTransaction = transaction;
+  }
 
   for (const transaction of transactions) {
     if (!MARKET_TIMING_TYPES.has(transaction.type) || !transaction.itemCode || transaction.quantity <= 0) {
       continue;
     }
 
-    const offerCreatedAt = transaction.original.offerCreatedAt;
-    const offerDelayMs = getElapsedMilliseconds(offerCreatedAt, transaction.createdAt);
-    if (transaction.type === "itemMarket" && offerCreatedAt && offerDelayMs !== null) {
-      offerBackedTransactionCount += 1;
-      if (offerDelayMs < thresholds.rapidTimingWindowMs) {
-        rapidOfferFills.push({
-          transactionId: transaction.transactionId,
-          createdAt: transaction.createdAt,
-          offerCreatedAt,
-          delayMs: offerDelayMs,
-          type: transaction.type,
-          role: transaction.role,
-          itemCode: transaction.itemCode,
-          quantity: transaction.quantity,
-          money: transaction.money,
-          counterparty: transaction.counterpartyLabel
-        });
-      }
-    }
-
     if (transaction.role !== "buyer") {
       continue;
     }
 
-    buyerItemTransactionCount += 1;
     if (previousBuyerItemTransaction) {
       const gapMs = getElapsedMilliseconds(previousBuyerItemTransaction.createdAt, transaction.createdAt);
-      if (gapMs !== null && gapMs < thresholds.rapidTimingWindowMs) {
-        rapidBuyGaps.push({
-          previousTransactionId: previousBuyerItemTransaction.transactionId,
-          previousCreatedAt: previousBuyerItemTransaction.createdAt,
-          previousType: previousBuyerItemTransaction.type,
-          previousItemCode: previousBuyerItemTransaction.itemCode ?? "-",
-          previousQuantity: previousBuyerItemTransaction.quantity,
-          previousMoney: previousBuyerItemTransaction.money,
-          previousCounterparty: previousBuyerItemTransaction.counterpartyLabel,
-          transactionId: transaction.transactionId,
-          createdAt: transaction.createdAt,
-          gapMs,
-          type: transaction.type,
-          itemCode: transaction.itemCode,
-          quantity: transaction.quantity,
-          money: transaction.money,
-          counterparty: transaction.counterpartyLabel
+      if (gapMs !== null) {
+        buyGapSamples.push({
+          valueMs: gapMs,
+          createdAt: transaction.createdAt
         });
+        buyGapValues.push(gapMs);
+        if (gapMs < thresholds.rapidTimingWindowMs) {
+          rapidBuyGaps.push({
+            previousTransactionId: previousBuyerItemTransaction.transactionId,
+            previousCreatedAt: previousBuyerItemTransaction.createdAt,
+            previousType: previousBuyerItemTransaction.type,
+            previousItemCode: previousBuyerItemTransaction.itemCode ?? "-",
+            previousQuantity: previousBuyerItemTransaction.quantity,
+            previousMoney: previousBuyerItemTransaction.money,
+            previousCounterparty: previousBuyerItemTransaction.counterpartyLabel,
+            transactionId: transaction.transactionId,
+            createdAt: transaction.createdAt,
+            gapMs,
+            type: transaction.type,
+            itemCode: transaction.itemCode,
+            quantity: transaction.quantity,
+            money: transaction.money,
+            counterparty: transaction.counterpartyLabel
+          });
+        }
       }
     }
 
     previousBuyerItemTransaction = transaction;
   }
 
-  rapidOfferFills.sort(
+  rapidOfferPostGaps.sort(
     (left, right) =>
-      left.delayMs - right.delayMs || left.createdAt.localeCompare(right.createdAt)
+      left.gapMs - right.gapMs || left.offerCreatedAt.localeCompare(right.offerCreatedAt)
   );
   rapidBuyGaps.sort(
     (left, right) =>
@@ -1240,11 +1451,15 @@ function summarizeTimingAnalysis(
 
   return {
     thresholdMs: thresholds.rapidTimingWindowMs,
-    offerBackedTransactionCount,
-    rapidOfferFillCount: rapidOfferFills.length,
-    buyerItemTransactionCount,
+    sellerItemTransactionCount: sellerOfferTransactions.length,
+    rapidOfferPostGapCount: rapidOfferPostGaps.length,
+    offerPostGapStats: summarizeTimingMetric(offerPostGapValues),
+    regularOfferPostGapPattern: findRegularTimingPattern(offerPostGapSamples, thresholds),
+    rapidOfferPostGaps,
+    buyerItemTransactionCount: buyGapValues.length + (previousBuyerItemTransaction ? 1 : 0),
     rapidBuyGapCount: rapidBuyGaps.length,
-    rapidOfferFills,
+    buyGapStats: summarizeTimingMetric(buyGapValues),
+    regularBuyGapPattern: findRegularTimingPattern(buyGapSamples, thresholds),
     rapidBuyGaps
   };
 }
@@ -1469,26 +1684,69 @@ function buildSignals(args: {
     );
   }
 
-  if (timingAnalysis.rapidOfferFillCount > 0 || timingAnalysis.rapidBuyGapCount > 0) {
-    const fastestOfferFill = timingAnalysis.rapidOfferFills[0];
+  const regularOfferPostPattern = timingAnalysis.regularOfferPostGapPattern;
+  const regularBuyPattern = timingAnalysis.regularBuyGapPattern;
+  if (
+    timingAnalysis.rapidOfferPostGapCount > 0 ||
+    timingAnalysis.rapidBuyGapCount > 0 ||
+    regularOfferPostPattern ||
+    regularBuyPattern
+  ) {
+    const fastestOfferPostGap = timingAnalysis.rapidOfferPostGaps[0];
     const fastestBuyGap = timingAnalysis.rapidBuyGaps[0];
-    const totalRapidEvents = timingAnalysis.rapidOfferFillCount + timingAnalysis.rapidBuyGapCount;
+    const regularOfferPostPatternSampleCount = regularOfferPostPattern?.sampleCount ?? 0;
+    const regularBuyPatternSampleCount = regularBuyPattern?.sampleCount ?? 0;
+    const severity =
+      timingAnalysis.rapidOfferPostGapCount + timingAnalysis.rapidBuyGapCount >= 10 ||
+      regularOfferPostPatternSampleCount >= 7 ||
+      regularBuyPatternSampleCount >= 7
+        ? "high"
+        : "medium";
+    const summaryParts: string[] = [];
+
+    if (timingAnalysis.rapidOfferPostGapCount > 0) {
+      summaryParts.push(
+        `${timingAnalysis.rapidOfferPostGapCount} seller-side item-market offer postings landed within ${timingAnalysis.thresholdMs}ms of the previous observed posting`
+      );
+    }
+    if (timingAnalysis.rapidBuyGapCount > 0) {
+      summaryParts.push(
+        `${timingAnalysis.rapidBuyGapCount} buyer-side item-market purchases landed within ${timingAnalysis.thresholdMs}ms of the previous buy`
+      );
+    }
+
+    if (regularOfferPostPattern) {
+      summaryParts.push(
+        `offer-post gaps clustered tightly at ${regularOfferPostPattern.minMs}-${regularOfferPostPattern.maxMs}ms across ${regularOfferPostPattern.sampleCount}/${regularOfferPostPattern.eligibleSampleCount} observed sold offers`
+      );
+    }
+    if (regularBuyPattern) {
+      summaryParts.push(
+        `buy gaps clustered tightly at ${regularBuyPattern.minMs}-${regularBuyPattern.maxMs}ms across ${regularBuyPattern.sampleCount}/${regularBuyPattern.eligibleSampleCount} item-market purchases`
+      );
+    }
 
     pushSignal(
       signals,
       "timing_anomaly",
-      totalRapidEvents >= 10 ? "high" : "medium",
-      "Suspiciously fast market timing",
-      `${timingAnalysis.rapidOfferFillCount} offer-backed item-market transactions settled within ${timingAnalysis.thresholdMs}ms of posting, and ${timingAnalysis.rapidBuyGapCount} buyer-side item-market purchases landed within ${timingAnalysis.thresholdMs}ms of the previous buy.`,
+      severity,
+      "Suspicious item-market timing patterns",
+      `${summaryParts.join(", ")}.`,
       [
-        `Offer-backed item-market transactions checked: ${timingAnalysis.offerBackedTransactionCount}`,
-        `Buyer-side item-market transactions checked: ${timingAnalysis.buyerItemTransactionCount}`,
-        fastestOfferFill
-          ? `Fastest offer fill: ${fastestOfferFill.itemCode} ${fastestOfferFill.role} in ${fastestOfferFill.delayMs}ms vs ${fastestOfferFill.counterparty}`
-          : "No rapid offer-fill example",
+        `Seller-side sold offer postings checked: ${timingAnalysis.sellerItemTransactionCount}`,
+        `Buyer-side item-market purchases checked: ${timingAnalysis.buyerItemTransactionCount}`,
+        fastestOfferPostGap
+          ? `Fastest offer-post gap: ${fastestOfferPostGap.previousItemCode} -> ${fastestOfferPostGap.itemCode} in ${fastestOfferPostGap.gapMs}ms`
+          : "No rapid offer-post gap example",
         fastestBuyGap
           ? `Fastest buy gap: ${fastestBuyGap.previousItemCode} -> ${fastestBuyGap.itemCode} in ${fastestBuyGap.gapMs}ms`
-          : "No rapid buy-gap example"
+          : "No rapid buy-gap example",
+        regularOfferPostPattern
+          ? `Offer-post cadence cluster: ${regularOfferPostPattern.sampleCount}/${regularOfferPostPattern.eligibleSampleCount} samples between ${regularOfferPostPattern.minMs}ms and ${regularOfferPostPattern.maxMs}ms (stddev ${regularOfferPostPattern.standardDeviationMs}ms, CV ${regularOfferPostPattern.coefficientOfVariation})`
+          : "No repeated offer-post cadence detected",
+        regularBuyPattern
+          ? `Buy-gap cadence cluster: ${regularBuyPattern.sampleCount}/${regularBuyPattern.eligibleSampleCount} samples between ${regularBuyPattern.minMs}ms and ${regularBuyPattern.maxMs}ms (stddev ${regularBuyPattern.standardDeviationMs}ms, CV ${regularBuyPattern.coefficientOfVariation})`
+          : "No repeated buy-gap cadence detected"
       ]
     );
   }
@@ -1557,7 +1815,7 @@ export function analyzeOverwatchData(input: OverwatchAuditInput): OverwatchAudit
     "Weekly and headline transaction deltas are derived from transaction history and priced items only; they are not historical API wealth snapshots.",
     "Official case rarity tables are baked in for case1 (Case) and case2 (Elite Case); unknown case codes fall back to summary-only reporting.",
     "Craft checks compare craftItem scrap usage against the official rarity ladder: common 6, uncommon 18, rare 54, epic 162, legendary 486, mythic 1458.",
-    `Timing analysis flags offer-backed item-market transactions and consecutive buyer-side item-market purchases that complete within ${thresholds.rapidTimingWindowMs} milliseconds.`
+    `Timing analysis tracks two separate itemMarket timing behaviors: seller-side offer posting cadence inferred from settled sales via offerCreatedAt, and buyer-side consecutive purchase gaps. These are reported separately to avoid conflating buying scripts with selling scripts.`
   ];
 
   const suspiciousSignals = buildSignals({

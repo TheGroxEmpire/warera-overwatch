@@ -16,6 +16,18 @@ import type {
 
 const DEFAULT_LOOKBACK_DAYS = 90;
 const DEFAULT_PAGE_LIMIT = 100;
+const FETCH_TRANSACTION_TYPES = [
+  "applicationFee",
+  "trading",
+  "itemMarket",
+  "wage",
+  "donation",
+  "articleTip",
+  "openCase",
+  "craftItem",
+  "dismantleItem",
+  "battleLoot"
+] as const;
 
 function emitProgress(
   options: OverwatchAuditOptions,
@@ -28,6 +40,75 @@ function ensureUserSelector(options: OverwatchAuditOptions) {
   if (!options.userId && !options.username) {
     throw new Error("Provide either userId or username.");
   }
+}
+
+function parseCursorDate(cursor: string | undefined): Date | null {
+  if (!cursor || typeof cursor !== "string") {
+    return null;
+  }
+
+  const pipeIndex = cursor.indexOf("|");
+  if (pipeIndex === -1) {
+    return null;
+  }
+
+  const dateString = cursor.slice(0, pipeIndex);
+  if (dateString === "undefined") {
+    return null;
+  }
+
+  const date = new Date(dateString);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function shouldStopTransactionPagination(
+  page: { items: TransactionListItem[]; nextCursor?: string },
+  cursorEnd?: Date
+): boolean {
+  if (!page.nextCursor || page.items.length === 0 || page.nextCursor.includes("undefined")) {
+    return true;
+  }
+
+  if (!cursorEnd) {
+    return false;
+  }
+
+  const cursorDate = parseCursorDate(page.nextCursor);
+  return Boolean(cursorDate && cursorDate < cursorEnd);
+}
+
+function pushUniqueTransactions(
+  target: TransactionListItem[],
+  seen: Set<string>,
+  items: TransactionListItem[]
+) {
+  for (const item of items) {
+    if (typeof item._id === "string" && seen.has(item._id)) {
+      continue;
+    }
+    if (typeof item._id === "string") {
+      seen.add(item._id);
+    }
+    target.push(item);
+  }
+}
+
+function emitTransactionFetchProgress(
+  options: OverwatchAuditOptions,
+  startedAt: number,
+  page: number,
+  transactionCount: number,
+  message: string
+) {
+  emitProgress(options, {
+    stage: "fetch_transactions",
+    status: "update",
+    message,
+    page,
+    total: options.maxPages,
+    transactionCount,
+    elapsedMs: Date.now() - startedAt
+  });
 }
 
 async function resolveByUserId(
@@ -170,33 +251,82 @@ async function collectTransactions(
     transactionCount: 0
   });
 
-  for await (const transactionPage of client.transaction.getPaginatedTransactions({
-    userId,
-    limit: options.transactionPageLimit ?? DEFAULT_PAGE_LIMIT,
-    autoPaginate: true,
-    maxPages: options.maxPages,
-    cursorEnd
-  })) {
-    page += 1;
-    for (const item of transactionPage.items) {
-      if (typeof item._id === "string" && seen.has(item._id)) {
-        continue;
-      }
-      if (typeof item._id === "string") {
-        seen.add(item._id);
-      }
-      transactions.push(item);
-    }
+  const pageLimit = options.transactionPageLimit ?? DEFAULT_PAGE_LIMIT;
 
-    emitProgress(options, {
-      stage: "fetch_transactions",
-      status: "update",
-      message: "Fetched transaction page",
-      page,
-      total: options.maxPages,
-      transactionCount: transactions.length,
-      elapsedMs: Date.now() - startedAt
+  if (typeof options.maxPages === "number") {
+    for await (const transactionPage of client.transaction.getPaginatedTransactions({
+      userId,
+      limit: pageLimit,
+      autoPaginate: true,
+      maxPages: options.maxPages,
+      cursorEnd
+    })) {
+      page += 1;
+      pushUniqueTransactions(transactions, seen, transactionPage.items);
+      emitTransactionFetchProgress(
+        options,
+        startedAt,
+        page,
+        transactions.length,
+        "Fetched transaction page"
+      );
+    }
+  } else {
+    const firstPage = await client.transaction.getPaginatedTransactions({
+      userId,
+      limit: pageLimit
     });
+
+    page += 1;
+    pushUniqueTransactions(transactions, seen, firstPage.items);
+    emitTransactionFetchProgress(
+      options,
+      startedAt,
+      page,
+      transactions.length,
+      "Fetched transaction page"
+    );
+
+    if (!shouldStopTransactionPagination(firstPage, cursorEnd)) {
+      emitTransactionFetchProgress(
+        options,
+        startedAt,
+        page,
+        transactions.length,
+        "Switching to parallel transaction-type fetch"
+      );
+
+      await Promise.all(
+        FETCH_TRANSACTION_TYPES.map(async (transactionType) => {
+          let cursor: string | undefined;
+
+          while (true) {
+            const transactionPage = await client.transaction.getPaginatedTransactions({
+              userId,
+              transactionType,
+              limit: pageLimit,
+              ...(cursor ? { cursor } : {})
+            });
+
+            page += 1;
+            pushUniqueTransactions(transactions, seen, transactionPage.items);
+            emitTransactionFetchProgress(
+              options,
+              startedAt,
+              page,
+              transactions.length,
+              "Fetched parallel transaction page"
+            );
+
+            if (shouldStopTransactionPagination(transactionPage, cursorEnd)) {
+              break;
+            }
+
+            cursor = transactionPage.nextCursor;
+          }
+        })
+      );
+    }
   }
 
   emitProgress(options, {
@@ -384,7 +514,8 @@ function applyUserDirectory(report: OverwatchAuditReport, directory: Map<string,
     }
   }
 
-  for (const example of report.summary.timingAnalysis.rapidOfferFills) {
+  for (const example of report.summary.timingAnalysis.rapidOfferPostGaps) {
+    example.previousCounterparty = resolveUserLabel(example.previousCounterparty);
     example.counterparty = resolveUserLabel(example.counterparty);
   }
 
