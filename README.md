@@ -47,6 +47,7 @@ npm run overwatch -- --username SomePlayer --markdown reports/some-player.md --j
 npm run overwatch -- --username SomePlayer --detail-rows 50
 npm run overwatch -- --username SomePlayer --detail-rows all
 npm run overwatch -- --username SomePlayer --rapid-ms 750
+npm run overwatch -- --username SomePlayer --section timing --seller-rapid-ms 5000 --buyer-rapid-ms 1000
 npm run overwatch -- --username SomePlayer --verbose
 npm run overwatch -- --username SomePlayer --no-progress
 ```
@@ -75,8 +76,11 @@ Weekly drilldown files include:
 - Case-drop analysis uses fixed official rates for `case1` and `case2`. Unknown case codes are still summarized, but they are not compared to an official baseline.
 - Craft analysis checks `craftItem` transactions against the official scrap ladder: common `6`, uncommon `18`, rare `54`, epic `162`, legendary `486`, mythic `1458`.
 - Timing analysis reports two separate `itemMarket` timing behaviors: seller-side offer posting cadence inferred from settled sales via `offerCreatedAt`, and buyer-side consecutive purchase gaps based on transaction `createdAt`. They are labeled separately so buyer scripting is not conflated with seller scripting.
+- `--section timing` renders only the timing analysis block and fetches only `itemMarket` transactions, which is faster when you are reviewing market automation only.
 
 ## Notes
 
 - Use `--detail-rows <n|all>` to control how many rows weekly drilldown tables preview before the expandable full tables.
-- Use `--rapid-ms <n>` to change the rapid timing threshold from the default `1000ms`.
+- Timing analysis uses separate defaults: seller-side offer posting cadence is flagged under `5000ms` using `offerCreatedAt`, while buyer-side purchase gaps are flagged under `1000ms` using `createdAt`.
+- Use `--rapid-ms <n>` to override both timing thresholds together.
+- Use `--seller-rapid-ms <n>` and `--buyer-rapid-ms <n>` when you want different thresholds for seller posting cadence and buyer purchase cadence.

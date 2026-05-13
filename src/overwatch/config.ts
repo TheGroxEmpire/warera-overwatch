@@ -15,7 +15,8 @@ export const DEFAULT_OVERWATCH_THRESHOLDS: OverwatchThresholds = {
   wageBaselineRatio: 0.142,
   pairMinMoney: 10,
   pairMinTransactions: 5,
-  rapidTimingWindowMs: 1000
+  rapidSellerOfferTimingWindowMs: 5000,
+  rapidBuyerTimingWindowMs: 1000
 };
 
 export function mergeOverwatchThresholds(

@@ -1218,8 +1218,12 @@ function findRegularTimingPattern(
   thresholds: OverwatchThresholds
 ): OverwatchTimingAnomalySummary["regularOfferPostGapPattern"] {
   const minSampleCount = 5;
-  const maxConsideredMs = Math.max(thresholds.rapidTimingWindowMs * 2, 1500);
-  const clusterWindowMs = Math.max(Math.round(thresholds.rapidTimingWindowMs * 0.15), 150);
+  const baselineWindowMs = Math.min(
+    thresholds.rapidSellerOfferTimingWindowMs,
+    thresholds.rapidBuyerTimingWindowMs
+  );
+  const maxConsideredMs = Math.max(baselineWindowMs * 2, 1500);
+  const clusterWindowMs = Math.max(Math.round(baselineWindowMs * 0.15), 150);
   const eligible = samples
     .filter((sample) => sample.valueMs <= maxConsideredMs)
     .sort(
@@ -1366,12 +1370,19 @@ function summarizeTimingAnalysis(
         offerCreatedAt
       );
       if (gapMs !== null) {
+        const itemChanged =
+          (previousSellerOfferTransaction.itemCode ?? "-") !== (transaction.itemCode ?? "-");
+        const priceChanged = previousSellerOfferTransaction.money !== transaction.money;
+        const effectiveThresholdMs =
+          itemChanged || priceChanged
+            ? thresholds.rapidSellerOfferTimingWindowMs
+            : thresholds.rapidBuyerTimingWindowMs;
         offerPostGapSamples.push({
           valueMs: gapMs,
           createdAt: offerCreatedAt
         });
         offerPostGapValues.push(gapMs);
-        if (gapMs < thresholds.rapidTimingWindowMs) {
+        if (gapMs < effectiveThresholdMs) {
           rapidOfferPostGaps.push({
             previousTransactionId: previousSellerOfferTransaction.transactionId,
             previousCreatedAt: previousSellerOfferTransaction.createdAt,
@@ -1385,6 +1396,9 @@ function summarizeTimingAnalysis(
             createdAt: transaction.createdAt,
             offerCreatedAt,
             gapMs,
+            effectiveThresholdMs,
+            itemChanged,
+            priceChanged,
             type: transaction.type,
             itemCode: transaction.itemCode,
             quantity: transaction.quantity,
@@ -1415,7 +1429,7 @@ function summarizeTimingAnalysis(
           createdAt: transaction.createdAt
         });
         buyGapValues.push(gapMs);
-        if (gapMs < thresholds.rapidTimingWindowMs) {
+        if (gapMs < thresholds.rapidBuyerTimingWindowMs) {
           rapidBuyGaps.push({
             previousTransactionId: previousBuyerItemTransaction.transactionId,
             previousCreatedAt: previousBuyerItemTransaction.createdAt,
@@ -1450,12 +1464,14 @@ function summarizeTimingAnalysis(
   );
 
   return {
-    thresholdMs: thresholds.rapidTimingWindowMs,
+    sellerThresholdMs: thresholds.rapidSellerOfferTimingWindowMs,
+    sellerDuplicateThresholdMs: thresholds.rapidBuyerTimingWindowMs,
     sellerItemTransactionCount: sellerOfferTransactions.length,
     rapidOfferPostGapCount: rapidOfferPostGaps.length,
     offerPostGapStats: summarizeTimingMetric(offerPostGapValues),
     regularOfferPostGapPattern: findRegularTimingPattern(offerPostGapSamples, thresholds),
     rapidOfferPostGaps,
+    buyerThresholdMs: thresholds.rapidBuyerTimingWindowMs,
     buyerItemTransactionCount: buyGapValues.length + (previousBuyerItemTransaction ? 1 : 0),
     rapidBuyGapCount: rapidBuyGaps.length,
     buyGapStats: summarizeTimingMetric(buyGapValues),
@@ -1706,12 +1722,12 @@ function buildSignals(args: {
 
     if (timingAnalysis.rapidOfferPostGapCount > 0) {
       summaryParts.push(
-        `${timingAnalysis.rapidOfferPostGapCount} seller-side item-market offer postings landed within ${timingAnalysis.thresholdMs}ms of the previous observed posting`
+        `${timingAnalysis.rapidOfferPostGapCount} seller-side item-market offer postings were rapid using ${timingAnalysis.sellerThresholdMs}ms for changed item/price and ${timingAnalysis.sellerDuplicateThresholdMs}ms for identical reposts`
       );
     }
     if (timingAnalysis.rapidBuyGapCount > 0) {
       summaryParts.push(
-        `${timingAnalysis.rapidBuyGapCount} buyer-side item-market purchases landed within ${timingAnalysis.thresholdMs}ms of the previous buy`
+        `${timingAnalysis.rapidBuyGapCount} buyer-side item-market purchases landed within ${timingAnalysis.buyerThresholdMs}ms of the previous buy`
       );
     }
 
@@ -1734,6 +1750,7 @@ function buildSignals(args: {
       `${summaryParts.join(", ")}.`,
       [
         `Seller-side sold offer postings checked: ${timingAnalysis.sellerItemTransactionCount}`,
+        `Changed seller-offer threshold: ${timingAnalysis.sellerThresholdMs}ms | Identical seller-offer threshold: ${timingAnalysis.sellerDuplicateThresholdMs}ms`,
         `Buyer-side item-market purchases checked: ${timingAnalysis.buyerItemTransactionCount}`,
         fastestOfferPostGap
           ? `Fastest offer-post gap: ${fastestOfferPostGap.previousItemCode} -> ${fastestOfferPostGap.itemCode} in ${fastestOfferPostGap.gapMs}ms`

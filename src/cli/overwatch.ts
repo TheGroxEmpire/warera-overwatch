@@ -2,7 +2,11 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createAPIClient } from "@wareraprojects/api";
 import { createProgressReporter } from "./progress";
-import { renderOverwatchMarkdown, renderWeeklyDetailMarkdown } from "../overwatch/markdown";
+import {
+  renderOverwatchMarkdown,
+  renderTimingAnalysisMarkdown,
+  renderWeeklyDetailMarkdown
+} from "../overwatch/markdown";
 import { buildOverwatchReport } from "../overwatch/service";
 
 type ParsedArgs = {
@@ -13,7 +17,10 @@ type ParsedArgs = {
   maxPages?: number;
   pageLimit?: number;
   detailRows: number | "all";
-  rapidMs: number;
+  sellerRapidMs?: number;
+  buyerRapidMs?: number;
+  rapidMs?: number;
+  section: "full" | "timing";
   outDir: string;
   jsonPath?: string;
   markdownPath?: string;
@@ -62,7 +69,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     timezone: "UTC",
     days: 90,
     detailRows: 20,
-    rapidMs: 1000,
+    section: "full",
     outDir: "reports",
     stdout: "markdown",
     includeTransactions: true,
@@ -110,6 +117,22 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--rapid-ms":
         args.rapidMs = parsePositiveInteger(next, "--rapid-ms");
+        index += 1;
+        break;
+      case "--seller-rapid-ms":
+        args.sellerRapidMs = parsePositiveInteger(next, "--seller-rapid-ms");
+        index += 1;
+        break;
+      case "--buyer-rapid-ms":
+        args.buyerRapidMs = parsePositiveInteger(next, "--buyer-rapid-ms");
+        index += 1;
+        break;
+      case "--section":
+        if (next === "full" || next === "timing") {
+          args.section = next;
+        } else {
+          throw new Error(`--section expects full or timing.`);
+        }
         index += 1;
         break;
       case "--out-dir":
@@ -185,7 +208,10 @@ Options:
   --max-pages <n>         Stop pagination after n pages
   --page-limit <n>        Page size for transaction fetches (default: 100)
   --detail-rows <n|all>   Preview rows per table in weekly drilldowns (default: 20)
-  --rapid-ms <n>          Rapid timing threshold in milliseconds (default: 1000)
+  --rapid-ms <n>          Override both rapid timing thresholds in milliseconds
+  --seller-rapid-ms <n>   Seller offer-post timing threshold in milliseconds
+  --buyer-rapid-ms <n>    Buyer purchase-gap timing threshold in milliseconds
+  --section <mode>        full | timing (timing fetches only itemMarket)
   --out-dir <dir>         Output directory for report files (default: reports)
   --json <path>           Override JSON output path
   --markdown <path>       Override Markdown output path
@@ -249,9 +275,21 @@ async function main() {
     days: args.days,
     maxPages: args.maxPages,
     transactionPageLimit: args.pageLimit,
+    analysisMode: args.section,
     includeTransactions: args.includeTransactions,
     thresholds: {
-      rapidTimingWindowMs: args.rapidMs
+      ...(typeof args.rapidMs === "number"
+        ? {
+            rapidSellerOfferTimingWindowMs: args.rapidMs,
+            rapidBuyerTimingWindowMs: args.rapidMs
+          }
+        : {}),
+      ...(typeof args.sellerRapidMs === "number"
+        ? { rapidSellerOfferTimingWindowMs: args.sellerRapidMs }
+        : {}),
+      ...(typeof args.buyerRapidMs === "number"
+        ? { rapidBuyerTimingWindowMs: args.buyerRapidMs }
+        : {})
     },
     onProgress: (event) => {
       progress.onProgress(event);
@@ -283,7 +321,7 @@ async function main() {
   const weeklyDetailLinks: Record<string, string> = {};
   const weeklyFiles: Array<{ outputPath: string; content: string }> = [];
 
-  if (report.normalizedTransactions && report.summary.weekly.length > 0) {
+  if (args.section === "full" && report.normalizedTransactions && report.summary.weekly.length > 0) {
     await rm(weeklyDirPath, { recursive: true, force: true });
     await mkdir(weeklyDirPath, { recursive: true });
 
@@ -300,9 +338,19 @@ async function main() {
     }
   }
 
-  const markdown = renderOverwatchMarkdown(report, {
-    weeklyDetailLinks
-  });
+  const markdown =
+    args.section === "timing"
+      ? [
+          `# Timing Analysis: ${report.user.username || report.user.userId}`,
+          ``,
+          `Generated: ${report.generatedAt}`,
+          `Coverage: ${report.coverage.transactionCount} transactions from ${report.coverage.oldestTransactionAt ?? "n/a"} to ${report.coverage.newestTransactionAt ?? "n/a"}`,
+          ``,
+          renderTimingAnalysisMarkdown(report)
+        ].join("\n")
+      : renderOverwatchMarkdown(report, {
+          weeklyDetailLinks
+        });
 
   progress.onProgress({
     stage: "write_output",

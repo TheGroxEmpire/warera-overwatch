@@ -496,6 +496,19 @@ const timingReport = analyzeOverwatchData({
       sellerId: "u2",
       transactionType: "itemMarket",
       updatedAt: "2026-05-07T10:00:20.900Z"
+    },
+    {
+      __v: 0,
+      _id: "sell-11-same-item-price",
+      buyerId: "buyer-8",
+      createdAt: "2026-05-07T10:00:24.000Z",
+      itemCode: "grain",
+      money: 50,
+      offerCreatedAt: "2026-05-07T10:00:07.332Z",
+      quantity: 5,
+      sellerId: "u2",
+      transactionType: "itemMarket",
+      updatedAt: "2026-05-07T10:00:24.000Z"
     }
   ],
   marketPrices: {
@@ -507,10 +520,12 @@ const timingReport = analyzeOverwatchData({
   }
 });
 
-assert.equal(timingReport.summary.timingAnalysis.thresholdMs, 1000);
-assert.equal(timingReport.summary.timingAnalysis.sellerItemTransactionCount, 6);
+assert.equal(timingReport.summary.timingAnalysis.sellerThresholdMs, 5000);
+assert.equal(timingReport.summary.timingAnalysis.sellerDuplicateThresholdMs, 1000);
+assert.equal(timingReport.summary.timingAnalysis.buyerThresholdMs, 1000);
+assert.equal(timingReport.summary.timingAnalysis.sellerItemTransactionCount, 7);
 assert.equal(timingReport.summary.timingAnalysis.rapidOfferPostGapCount, 5);
-assert.equal(timingReport.summary.timingAnalysis.offerPostGapStats.count, 5);
+assert.equal(timingReport.summary.timingAnalysis.offerPostGapStats.count, 6);
 assert.equal(timingReport.summary.timingAnalysis.rapidOfferPostGaps[0]?.transactionId, "sell-2");
 assert.equal(timingReport.summary.timingAnalysis.regularOfferPostGapPattern?.sampleCount, 5);
 assert.equal(timingReport.summary.timingAnalysis.buyerItemTransactionCount, 3);
@@ -532,21 +547,25 @@ assert.match(timingMarkdown, /### Rapid Offer Posting Gaps/);
 assert.match(timingMarkdown, /### Rapid Buyer Purchase Gaps/);
 assert.match(
   timingMarkdown,
-  /\| Offer Time \| Prev Offer Time \| Gap \(s\) \| Prev Item \| Item \| Qty \| Money \| Buyer \| Sold Time \| Prev TX \| TX \|/
+  /\| Offer Time \| Prev Offer Time \| Gap \(s\) \| Prev Item \| Prev Price \| Item \| Price \| Trigger \| Qty \| Buyer \| Sold Time \| Prev TX \| TX \|/
 );
 assert.match(
   timingMarkdown,
   /\| Time \| Prev Time \| Gap \(s\) \| Prev Item \| Item \| Qty \| Money \| Seller \| Prev TX \| TX \|/
 );
-assert.match(timingMarkdown, /Threshold: 1000ms/);
-assert.match(timingMarkdown, /Seller-side sold offer postings checked: 6/);
+assert.match(timingMarkdown, /Seller changed-offer threshold: 5000ms/);
+assert.match(timingMarkdown, /Seller identical-offer threshold: 1000ms/);
+assert.match(timingMarkdown, /Buyer threshold: 1000ms/);
+assert.match(timingMarkdown, /Seller-side sold offer postings checked: 7/);
 assert.match(timingMarkdown, /Buyer-side item-market purchases checked: 3/);
-assert.match(timingMarkdown, /Offer-post gap stats: 5 samples/);
+assert.match(timingMarkdown, /Offer-post gap stats: 6 samples/);
 assert.match(timingMarkdown, /Buyer purchase gap stats: 2 samples/);
 assert.match(timingMarkdown, /Offer Post Gap Cadence/);
+assert.match(timingMarkdown, /Changed item\/price reposts use 5000ms, while identical item-and-price reposts use 1000ms/);
 assert.doesNotMatch(timingMarkdown, /<summary>Show all rapid offer-post gap transactions/);
 assert.match(timingMarkdown, /sell-2/);
 assert.match(timingMarkdown, /sell-10/);
+assert.doesNotMatch(timingMarkdown, /sell-11-same-item-price/);
 assert.match(timingMarkdown, /buy-4/);
 assert.match(timingMarkdown, /buy-6/);
 assert.doesNotMatch(timingMarkdown, /ignored-trading-5/);
@@ -707,5 +726,247 @@ assert.equal(
 );
 assert.ok(transactionFetchCalls.some((call) => call.transactionType === "trading"));
 assert.ok(transactionFetchCalls.some((call) => call.transactionType === "itemMarket"));
+
+const filteredRoundFetchCalls: Array<{
+  transactionType?: string | string[];
+  cursor?: string;
+  limit?: number;
+}> = [];
+await buildOverwatchReport({
+  user: {
+    getUserLite: async ({ userId }: { userId: string }) =>
+      ({
+        _id: userId,
+        country: "country-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        rankings: {
+          userWealth: { rank: 1, tier: "gold", value: 100 },
+          userCasesOpened: { rank: 1, tier: "gold", value: 0 }
+        },
+        username: "RoundRobinUser"
+      }) as never
+  },
+  transaction: {
+    getPaginatedTransactions: async (input: {
+      userId: string;
+      transactionType?: string | string[];
+      cursor?: string;
+      limit?: number;
+    }) => {
+      filteredRoundFetchCalls.push({
+        transactionType: input.transactionType,
+        cursor: input.cursor,
+        limit: input.limit
+      });
+
+      if (input.transactionType === "trading") {
+        if (!input.cursor) {
+          return {
+            items: [
+              {
+                __v: 0,
+                _id: "round-1",
+                buyerId: "u-round",
+                createdAt: "2026-05-09T00:00:00.000Z",
+                itemCode: "bread",
+                money: 10,
+                quantity: 1,
+                sellerId: "seller-1",
+                transactionType: "trading",
+                updatedAt: "2026-05-09T00:00:00.000Z"
+              }
+            ],
+            nextCursor: "2026-05-08T00:00:00.000Z|round-next"
+          };
+        }
+
+        return {
+          items: [
+            {
+              __v: 0,
+              _id: "round-2",
+              buyerId: "u-round",
+              createdAt: "2026-05-08T00:00:00.000Z",
+              itemCode: "bread",
+              money: 20,
+              quantity: 2,
+              sellerId: "seller-1",
+              transactionType: "trading",
+              updatedAt: "2026-05-08T00:00:00.000Z"
+            }
+          ],
+          nextCursor: undefined
+        };
+      }
+
+      if (input.transactionType === "itemMarket") {
+        return {
+          items: [
+            {
+              __v: 0,
+              _id: "round-3",
+              buyerId: "u-round",
+              createdAt: "2026-05-09T12:00:00.000Z",
+              itemCode: "grain",
+              money: 30,
+              quantity: 3,
+              sellerId: "seller-2",
+              transactionType: "itemMarket",
+              updatedAt: "2026-05-09T12:00:00.000Z"
+            }
+          ],
+          nextCursor: undefined
+        };
+      }
+
+      return {
+        items: [],
+        nextCursor: undefined
+      };
+    }
+  },
+  gameConfig: {
+    getGameConfig: async () => null
+  },
+  itemTrading: {
+    getPrices: async () => ({})
+  },
+  work: {
+    getStatsByUserId: async () => []
+  }
+} as never, {
+  userId: "u-round",
+  timezone: "UTC",
+  days: 90,
+  transactionPageLimit: 2,
+  transactionTypes: ["trading", "itemMarket"],
+  includeTransactions: true
+});
+
+assert.deepEqual(filteredRoundFetchCalls.slice(0, 2), [
+  { transactionType: "trading", cursor: undefined, limit: 2 },
+  { transactionType: "itemMarket", cursor: undefined, limit: 2 }
+]);
+assert.deepEqual(filteredRoundFetchCalls[2], {
+  transactionType: "trading",
+  cursor: "2026-05-08T00:00:00.000Z|round-next",
+  limit: 2
+});
+
+const timingOnlyFetchCalls: Array<{
+  transactionType?: string | string[];
+  cursor?: string;
+  limit?: number;
+}> = [];
+let timingOnlySupplementalCalls = 0;
+const timingOnlyReport = await buildOverwatchReport({
+  user: {
+    getUserLite: async ({ userId }: { userId: string }) =>
+      ({
+        _id: userId,
+        country: "country-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        rankings: {
+          userWealth: { rank: 1, tier: "gold", value: 100 },
+          userCasesOpened: { rank: 1, tier: "gold", value: 0 }
+        },
+        username: "TimingOnlyUser"
+      }) as never
+  },
+  transaction: {
+    getPaginatedTransactions: async (input: {
+      userId: string;
+      transactionType?: string | string[];
+      cursor?: string;
+      limit?: number;
+    }) => {
+      timingOnlyFetchCalls.push({
+        transactionType: input.transactionType,
+        cursor: input.cursor,
+        limit: input.limit
+      });
+
+      if (input.transactionType !== "itemMarket") {
+        return {
+          items: [],
+          nextCursor: undefined
+        };
+      }
+
+      if (!input.cursor) {
+        return {
+          items: [
+            {
+              __v: 0,
+              _id: "timing-only-1",
+              buyerId: "buyer-one",
+              createdAt: "2026-05-09T00:00:03.500Z",
+              itemCode: "grain",
+              money: 20,
+              offerCreatedAt: "2026-05-09T00:00:00.000Z",
+              quantity: 2,
+              sellerId: "u-timing-only",
+              transactionType: "itemMarket",
+              updatedAt: "2026-05-09T00:00:03.500Z"
+            },
+            {
+              __v: 0,
+              _id: "timing-only-2",
+              buyerId: "buyer-two",
+              createdAt: "2026-05-09T00:00:06.000Z",
+              itemCode: "bread",
+              money: 30,
+              offerCreatedAt: "2026-05-09T00:00:04.000Z",
+              quantity: 3,
+              sellerId: "u-timing-only",
+              transactionType: "itemMarket",
+              updatedAt: "2026-05-09T00:00:06.000Z"
+            }
+          ],
+          nextCursor: undefined
+        };
+      }
+
+      return {
+        items: [],
+        nextCursor: undefined
+      };
+    }
+  },
+  gameConfig: {
+    getGameConfig: async () => {
+      timingOnlySupplementalCalls += 1;
+      return null;
+    }
+  },
+  itemTrading: {
+    getPrices: async () => {
+      timingOnlySupplementalCalls += 1;
+      return {};
+    }
+  },
+  work: {
+    getStatsByUserId: async () => {
+      timingOnlySupplementalCalls += 1;
+      return [];
+    }
+  }
+} as never, {
+  userId: "u-timing-only",
+  timezone: "UTC",
+  days: 90,
+  analysisMode: "timing",
+  transactionPageLimit: 2,
+  includeTransactions: true
+});
+
+assert.equal(timingOnlyReport.coverage.transactionCount, 2);
+assert.equal(timingOnlyReport.summary.timingAnalysis.rapidOfferPostGapCount, 1);
+assert.equal(timingOnlySupplementalCalls, 0);
+assert.equal(
+  timingOnlyFetchCalls.filter((call) => call.transactionType === undefined).length,
+  0
+);
+assert.ok(timingOnlyFetchCalls.every((call) => call.transactionType === "itemMarket"));
 
 console.log("test-overwatch-analyzer: ok");

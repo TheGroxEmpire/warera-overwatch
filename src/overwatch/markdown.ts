@@ -574,9 +574,13 @@ function renderWeeklyRows(
   return { headers, rows };
 }
 
-function renderTimingAnalysis(report: OverwatchAuditReport): string {
+export function renderTimingAnalysisMarkdown(report: OverwatchAuditReport): string {
   const timing = report.summary.timingAnalysis as OverwatchAuditReport["summary"]["timingAnalysis"] & {
+    thresholdMs?: number;
     thresholdSeconds?: number;
+    sellerThresholdSeconds?: number;
+    sellerDuplicateThresholdMs?: number;
+    buyerThresholdSeconds?: number;
     rapidOfferPostGaps: Array<
       OverwatchAuditReport["summary"]["timingAnalysis"]["rapidOfferPostGaps"][number] & {
         gapSeconds?: number;
@@ -588,12 +592,30 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
       }
     >;
   };
-  const thresholdMs =
-    typeof timing.thresholdMs === "number"
+  const sellerThresholdMs =
+    typeof timing.sellerThresholdMs === "number"
+      ? timing.sellerThresholdMs
+      : typeof timing.sellerThresholdSeconds === "number"
+      ? Math.round(timing.sellerThresholdSeconds * 1000)
+      : typeof timing.thresholdMs === "number"
       ? timing.thresholdMs
       : typeof timing.thresholdSeconds === "number"
       ? Math.round(timing.thresholdSeconds * 1000)
       : 0;
+  const buyerThresholdMs =
+    typeof timing.buyerThresholdMs === "number"
+      ? timing.buyerThresholdMs
+      : typeof timing.buyerThresholdSeconds === "number"
+      ? Math.round(timing.buyerThresholdSeconds * 1000)
+      : typeof timing.thresholdMs === "number"
+      ? timing.thresholdMs
+      : typeof timing.thresholdSeconds === "number"
+      ? Math.round(timing.thresholdSeconds * 1000)
+      : 0;
+  const sellerDuplicateThresholdMs =
+    typeof timing.sellerDuplicateThresholdMs === "number"
+      ? timing.sellerDuplicateThresholdMs
+      : buyerThresholdMs;
   const regularPatternRows: Array<Array<string | number | undefined>> = [];
   if (timing.regularOfferPostGapPattern) {
     regularPatternRows.push([
@@ -620,7 +642,7 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
     ]);
   }
   const sections = [
-    `Threshold: ${milliseconds(thresholdMs)} | Seller-side sold offer postings checked: ${timing.sellerItemTransactionCount} | Rapid offer-post gaps: ${timing.rapidOfferPostGapCount} | Buyer-side item-market purchases checked: ${timing.buyerItemTransactionCount} | Rapid buy gaps: ${timing.rapidBuyGapCount}`,
+    `Seller changed-offer threshold: ${milliseconds(sellerThresholdMs)} | Seller identical-offer threshold: ${milliseconds(sellerDuplicateThresholdMs)} | Seller-side sold offer postings checked: ${timing.sellerItemTransactionCount} | Rapid offer-post gaps: ${timing.rapidOfferPostGapCount} | Buyer threshold: ${milliseconds(buyerThresholdMs)} | Buyer-side item-market purchases checked: ${timing.buyerItemTransactionCount} | Rapid buy gaps: ${timing.rapidBuyGapCount}`,
     `Offer-post gap stats: ${formatTimingMetricSummary(timing.offerPostGapStats)}`,
     `Buyer purchase gap stats: ${formatTimingMetricSummary(timing.buyGapStats)}`,
     ``
@@ -646,7 +668,7 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
       ``
     );
   } else {
-    sections.push(`No repeated narrow item-market offer-posting cadence detected in sub-${milliseconds(thresholdMs * 2)} samples.`, ``);
+    sections.push(`No repeated narrow item-market offer-posting cadence detected in sub-${milliseconds(Math.min(sellerThresholdMs, buyerThresholdMs) * 2)} samples.`, ``);
   }
 
   if (timing.rapidOfferPostGaps.length > 0) {
@@ -659,9 +681,11 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
           "Prev Offer Time",
           "Gap (s)",
           "Prev Item",
+          "Prev Price",
           "Item",
+          "Price",
+          "Trigger",
           "Qty",
-          "Money",
           "Buyer",
           "Sold Time",
           "Prev TX",
@@ -678,22 +702,31 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
                 )
           ),
           example.previousItemCode,
+          money(example.previousMoney),
           example.itemCode,
-          quantity(example.quantity),
           money(example.money),
+          example.itemChanged
+            ? "item"
+            : example.priceChanged
+            ? "price"
+            : `same<=${milliseconds(example.effectiveThresholdMs)}`,
+          quantity(example.quantity),
           example.counterparty,
           example.createdAt,
           example.previousTransactionId,
           example.transactionId
         ]),
         rowLimit: "all",
-        emptyMessage: `No seller-side item-market offer postings were closer than ${milliseconds(thresholdMs)} apart.`,
+        emptyMessage: `No seller-side item-market offer postings breached the changed-offer ${milliseconds(sellerThresholdMs)} or identical-offer ${milliseconds(sellerDuplicateThresholdMs)} thresholds.`,
         detailsLabel: "rapid offer-post gap transactions"
       }),
       ``
     );
   } else {
-    sections.push(`No seller-side item-market offer postings were closer than ${milliseconds(thresholdMs)} apart.`, ``);
+    sections.push(
+      `No seller-side item-market offer postings breached the changed-offer ${milliseconds(sellerThresholdMs)} or identical-offer ${milliseconds(sellerDuplicateThresholdMs)} thresholds.`,
+      ``
+    );
   }
 
   if (timing.rapidBuyGaps.length > 0) {
@@ -732,17 +765,17 @@ function renderTimingAnalysis(report: OverwatchAuditReport): string {
           example.transactionId
         ]),
         rowLimit: "all",
-        emptyMessage: `No buyer-side item-market purchases were closer than ${milliseconds(thresholdMs)} apart.`,
+        emptyMessage: `No buyer-side item-market purchases were closer than ${milliseconds(buyerThresholdMs)} apart.`,
         detailsLabel: "rapid buyer purchase-gap transactions"
       }),
       ``
     );
   } else {
-    sections.push(`No buyer-side item-market purchases were closer than ${milliseconds(thresholdMs)} apart.`, ``);
+    sections.push(`No buyer-side item-market purchases were closer than ${milliseconds(buyerThresholdMs)} apart.`, ``);
   }
 
   sections.push(
-    `Seller-side timings use sold item-market transactions only, with posting times inferred from \`offerCreatedAt\`. Buyer-side timings use consecutive purchase completion times (\`createdAt\`).`
+    `Seller-side timings use sold item-market transactions only, with posting times inferred from \`offerCreatedAt\`. Changed item/price reposts use ${milliseconds(sellerThresholdMs)}, while identical item-and-price reposts use ${milliseconds(sellerDuplicateThresholdMs)}. Buyer-side timings use consecutive purchase completion times (\`createdAt\`) with ${milliseconds(buyerThresholdMs)}.`
   );
 
   return sections.join("\n");
@@ -858,7 +891,7 @@ export function renderOverwatchMarkdown(
     ``,
     `## Timing Analysis`,
     ``,
-    renderTimingAnalysis(report),
+    renderTimingAnalysisMarkdown(report),
     ``,
     `## Category Breakdown`,
     ``,

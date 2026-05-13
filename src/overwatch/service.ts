@@ -8,6 +8,7 @@ import type {
 import type { WorkStatsItem } from "@wareraprojects/api";
 import { analyzeOverwatchData } from "./analyze";
 import type {
+  FetchableTransactionType,
   OverwatchAuditOptions,
   OverwatchAuditReport,
   OverwatchProgressEvent,
@@ -28,6 +29,20 @@ const FETCH_TRANSACTION_TYPES = [
   "dismantleItem",
   "battleLoot"
 ] as const;
+
+function getRequestedTransactionTypes(
+  options: OverwatchAuditOptions
+): FetchableTransactionType[] {
+  if (options.transactionTypes && options.transactionTypes.length > 0) {
+    return options.transactionTypes;
+  }
+
+  if (options.analysisMode === "timing") {
+    return ["itemMarket"];
+  }
+
+  return [...FETCH_TRANSACTION_TYPES];
+}
 
 function emitProgress(
   options: OverwatchAuditOptions,
@@ -252,8 +267,11 @@ async function collectTransactions(
   });
 
   const pageLimit = options.transactionPageLimit ?? DEFAULT_PAGE_LIMIT;
+  const requestedTransactionTypes = getRequestedTransactionTypes(options);
+  const useFilteredFetch =
+    (options.transactionTypes?.length ?? 0) > 0 || options.analysisMode === "timing";
 
-  if (typeof options.maxPages === "number") {
+  if (typeof options.maxPages === "number" && !useFilteredFetch) {
     for await (const transactionPage of client.transaction.getPaginatedTransactions({
       userId,
       limit: pageLimit,
@@ -271,7 +289,7 @@ async function collectTransactions(
         "Fetched transaction page"
       );
     }
-  } else {
+  } else if (!useFilteredFetch) {
     const firstPage = await client.transaction.getPaginatedTransactions({
       userId,
       limit: pageLimit
@@ -326,6 +344,63 @@ async function collectTransactions(
           }
         })
       );
+    }
+  } else {
+    const activeFetches = requestedTransactionTypes.map((transactionType) => ({
+      transactionType,
+      cursor: undefined as string | undefined,
+      pagesForType: 0
+    }));
+
+    while (activeFetches.length > 0) {
+      const roundFetches = activeFetches.filter(({ pagesForType }) => {
+        if (typeof options.maxPages !== "number" || options.maxPages <= 0) {
+          return true;
+        }
+
+        return pagesForType < options.maxPages;
+      });
+
+      if (roundFetches.length === 0) {
+        break;
+      }
+
+      const roundResults = await Promise.all(
+        roundFetches.map(async (state) => ({
+          state,
+          transactionPage: await client.transaction.getPaginatedTransactions({
+            userId,
+            transactionType: state.transactionType,
+            limit: pageLimit,
+            ...(state.cursor ? { cursor: state.cursor } : {})
+          })
+        }))
+      );
+
+      for (const { state, transactionPage } of roundResults) {
+        page += 1;
+        state.pagesForType += 1;
+        pushUniqueTransactions(transactions, seen, transactionPage.items);
+        emitTransactionFetchProgress(
+          options,
+          startedAt,
+          page,
+          transactions.length,
+          `Fetched ${state.transactionType} transaction page`
+        );
+      }
+
+      for (let index = activeFetches.length - 1; index >= 0; index -= 1) {
+        const state = activeFetches[index];
+        const result = roundResults.find((entry) => entry.state === state);
+
+        if (!result || shouldStopTransactionPagination(result.transactionPage, cursorEnd)) {
+          activeFetches.splice(index, 1);
+          continue;
+        }
+
+        state.cursor = result.transactionPage.nextCursor;
+      }
     }
   }
 
@@ -544,9 +619,16 @@ export async function buildOverwatchReport(
   const timezone = options.timezone ?? "UTC";
   const days = options.days ?? DEFAULT_LOOKBACK_DAYS;
   const subject = await resolveOverwatchSubject(client, options);
+  const shouldFetchSupplemental = options.analysisMode !== "timing";
   const [transactions, supplemental] = await Promise.all([
     collectTransactions(client, subject.userId, options),
-    fetchSupplementalData(client, subject.user, days, timezone, options)
+    shouldFetchSupplemental
+      ? fetchSupplementalData(client, subject.user, days, timezone, options)
+      : Promise.resolve({
+          gameConfig: null,
+          marketPrices: null,
+          workStats: null
+        })
   ]);
 
   const analyzeStartedAt = Date.now();

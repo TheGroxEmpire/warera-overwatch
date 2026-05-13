@@ -19,6 +19,8 @@ export type SupportedTransactionType =
   | "battleLoot"
   | "unknown";
 
+export type FetchableTransactionType = Exclude<SupportedTransactionType, "unknown">;
+
 export type OverwatchSeverity = "high" | "medium" | "low" | "info";
 
 export type OverwatchSignalCode =
@@ -46,7 +48,8 @@ export interface OverwatchThresholds {
   wageBaselineRatio: number;
   pairMinMoney: number;
   pairMinTransactions: number;
-  rapidTimingWindowMs: number;
+  rapidSellerOfferTimingWindowMs: number;
+  rapidBuyerTimingWindowMs: number;
 }
 
 export interface OverwatchAuditOptions {
@@ -57,6 +60,8 @@ export interface OverwatchAuditOptions {
   maxPages?: number;
   transactionPageLimit?: number;
   includeTransactions?: boolean;
+  transactionTypes?: FetchableTransactionType[];
+  analysisMode?: "full" | "timing";
   thresholds?: Partial<OverwatchThresholds>;
   now?: Date;
   onProgress?: (event: OverwatchProgressEvent) => void;
@@ -325,6 +330,9 @@ export interface OverwatchRapidOfferPostGapExample {
   createdAt: string;
   offerCreatedAt: string;
   gapMs: number;
+  effectiveThresholdMs: number;
+  itemChanged: boolean;
+  priceChanged: boolean;
   type: SupportedTransactionType;
   itemCode: string;
   quantity: number;
@@ -351,12 +359,14 @@ export interface OverwatchRapidBuyGapExample {
 }
 
 export interface OverwatchTimingAnomalySummary {
-  thresholdMs: number;
+  sellerThresholdMs: number;
+  sellerDuplicateThresholdMs: number;
   sellerItemTransactionCount: number;
   rapidOfferPostGapCount: number;
   offerPostGapStats: OverwatchTimingMetricSummary;
   regularOfferPostGapPattern: OverwatchTimingPatternCluster | null;
   rapidOfferPostGaps: OverwatchRapidOfferPostGapExample[];
+  buyerThresholdMs: number;
   buyerItemTransactionCount: number;
   rapidBuyGapCount: number;
   buyGapStats: OverwatchTimingMetricSummary;
